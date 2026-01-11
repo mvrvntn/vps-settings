@@ -2,7 +2,7 @@
 
 # Lightweight VPS Setup for Remnawave
 # Author: Kilo Code
-# Version: 1.3.0
+# Version: 1.4.0
 #
 # Этот скрипт выполняет базовую настройку и укрепление безопасности
 # для свежеустановленного сервера Debian/Ubuntu.
@@ -101,6 +101,130 @@ validate_port() {
     [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1024 ]] && [[ "$port" -le 65535 ]]
 }
 
+# --- Функции безопасности для SSH ---
+
+# Проверка конфигурации SSH на наличие ошибок
+validate_ssh_config() {
+    local config_file="/etc/ssh/sshd_config"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "[DRY-RUN] Would validate SSH config"
+        return 0
+    fi
+    
+    # Проверка конфигурации SSH на синтаксические ошибки
+    if ! sshd -t "$config_file" 2>/dev/null; then
+        log_error "❌ КРИТИЧЕСКАЯ ОШИБКА: Конфигурация SSH содержит ошибки!"
+        log_error "Пожалуйста, проверьте конфигурацию вручную:"
+        log_error "  sshd -t $config_file"
+        log_error "Отмена изменений..."
+        return 1
+    fi
+    
+    log_success "✅ Конфигурация SSH валидна"
+    return 0
+}
+
+# Проверка доступности порта SSH
+check_ssh_port_accessible() {
+    local port="$1"
+    local timeout="${2:-5}"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "[DRY-RUN] Would check SSH port accessibility"
+        return 0
+    fi
+    
+    # Проверка, слушается ли порт SSH
+    if command -v ss &>/dev/null; then
+        if ! ss -tuln | grep -q ":$port "; then
+            log_warn "⚠️ Порт $port не используется SSH на данный момент"
+            return 1
+        fi
+    else
+        if ! netstat -tuln 2>/dev/null | grep -q ":$port "; then
+            log_warn "⚠️ Порт $port не используется SSH на данный момент"
+            return 1
+        fi
+    fi
+    
+    log_success "✅ Порт $port доступен для SSH"
+    return 0
+}
+
+# Сохранение текущей конфигурации SSH для возможного отката
+save_current_ssh_config() {
+    local backup_dir="/root/.ssh-backups"
+    local config_file="/etc/ssh/sshd_config"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "[DRY-RUN] Would backup SSH config"
+        return 0
+    fi
+    
+    mkdir -p "$backup_dir"
+    local backup_file="$backup_dir/sshd_config.before-$(date +%Y%m%d_%H%M%S).bak"
+    
+    if [[ -f "$config_file" ]]; then
+        cp "$config_file" "$backup_file"
+        log_success "✅ Текущая конфигурация SSH сохранена: $backup_file"
+    else
+        log_warn "⚠️ Файл конфигурации SSH не найден: $config_file"
+    fi
+}
+
+# Проверка состояния службы SSH
+check_ssh_status() {
+    local timeout="${1:-10}"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "[DRY-RUN] Would check SSH status"
+        return 0
+    fi
+    
+    # Проверка, работает ли служба SSH
+    if ! systemctl is-active ssh >/dev/null 2>&1 && \
+       ! systemctl is-active sshd >/dev/null 2>&1; then
+        log_warn "⚠️ Служба SSH не активна"
+        return 1
+    fi
+    
+    log_success "✅ Служба SSH активна"
+    return 0
+}
+
+# Проверка конфликтов портов
+check_port_conflicts() {
+    local port="$1"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "[DRY-RUN] Would check port conflicts"
+        return 0
+    fi
+    
+    # Проверка, используется ли порт другим процессом
+    if command -v ss &>/dev/null; then
+        local process_info=$(ss -tulnp | grep ":$port " | head -1)
+        if [[ -n "$process_info" ]]; then
+            local pid=$(echo "$process_info" | awk '{print $7}' | cut -d, -f1)
+            local process_name=$(echo "$process_info" | awk '{print $6}')
+            log_warn "⚠️ Порт $port уже используется процессом: $process_name (PID: $pid)"
+            return 1
+        fi
+    else
+        local process_info=$(netstat -tulnp 2>/dev/null | grep ":$port " | head -1)
+        if [[ -n "$process_info" ]]; then
+            local pid=$(echo "$process_info" | awk '{print $7}')
+            local process_name=$(echo "$process_info" | awk '{print $6}')
+            log_warn "⚠️ Порт $port уже используется процессом: $process_name (PID: $pid)"
+            return 1
+        fi
+    fi
+    
+    log_success "✅ Порт $port свободен"
+    return 0
+}
+
 backup_file() {
     local file="$1"
     if [[ -f "$file" ]]; then
@@ -155,7 +279,29 @@ setup_ssh() {
         log_warn "Порт 2222 должен быть доступен для корректной работы панели."
         echo ""
     fi
-
+    
+    # Шаг 1: Проверка текущего состояния SSH перед изменениями
+    log_step "Проверка текущего состояния SSH"
+    if ! check_ssh_status; then
+        log_error "❌ Служба SSH не активна. Невозможно продолжить."
+        log_error "Пожалуйста, запустите SSH вручную: systemctl start ssh"
+        exit 1
+    fi
+    
+    # Шаг 2: Сохранение текущей конфигурации SSH для возможного отката
+    log_step "Сохранение текущей конфигурации SSH"
+    save_current_ssh_config
+    
+    # Шаг 3: Проверка конфликтов портов
+    log_step "Проверка конфликтов портов"
+    if ! check_port_conflicts "$port"; then
+        log_error "❌ Порт $port уже используется другим процессом."
+        log_error "Пожалуйста, выберите другой порт или остановите конфликтующий процесс."
+        exit 1
+    fi
+    
+    # Шаг 4: Изменение конфигурации SSH
+    log_step "Изменение конфигурации SSH"
     if [[ "$DRY_RUN" != "true" ]]; then
         sed -i "s/^#?Port .*/Port $port/" /etc/ssh/sshd_config
         sed -i "s/^#?PermitRootLogin .*/PermitRootLogin yes/" /etc/ssh/sshd_config
@@ -164,18 +310,54 @@ setup_ssh() {
         sed -i "s/^#?MaxAuthTries .*/MaxAuthTries 3/" /etc/ssh/sshd_config
         sed -i "s/^#?MaxStartups .*/MaxStartups 10:30:60/" /etc/ssh/sshd_config
     fi
-
-    log_warn "${STYLE_BOLD}Порт SSH будет изменен на $port!${COLOR_RESET}"
-    log_warn "Не забудьте разрешить этот порт в файрволе вашего облачного провайдера, чтобы не потерять доступ."
-
+    
+    # Шаг 5: Валидация конфигурации SSH перед перезапуском
+    log_step "Валидация конфигурации SSH"
+    if ! validate_ssh_config; then
+        log_error "❌ Конфигурация SSH содержит ошибки. Отмена изменений."
+        log_error "Резервная копия сохранена в: /root/.ssh-backups/"
+        exit 1
+    fi
+    
+    # Шаг 6: Перезапуск службы SSH
+    log_step "Перезапуск службы SSH"
+    log_warn "${STYLE_BOLD}⚠️ ВНИМАНИЕ: Порт SSH будет изменен на $port!${COLOR_RESET}"
+    log_warn "Убедитесь, что этот порт открыт в файрволе вашего облачного провайдера!"
+    
     if [[ "$DRY_RUN" != "true" ]]; then
         if systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; then
-            log_success "Сервис SSH перезапущен. Новый порт: $port."
+            log_success "✅ Сервис SSH перезапущен. Новый порт: $port."
         else
-            log_error "Не удалось перезапустить SSH. Проверьте конфигурацию."
+            log_error "❌ Не удалось перезапустить SSH."
+            log_error "Пожалуйста, проверьте конфигурацию:"
+            log_error "  sshd -t /etc/ssh/sshd_config"
+            log_error "  systemctl status ssh"
+            log_error "  journalctl -u ssh -n 50"
+            log_error ""
+            log_error "Резервная копия сохранена в: /root/.ssh-backups/"
             exit 1
         fi
     fi
+    
+    # Шаг 7: Проверка состояния SSH после перезапуска
+    log_step "Проверка состояния SSH после перезапуска"
+    if ! check_ssh_status; then
+        log_error "❌ Служба SSH не активна после перезапуска."
+        log_error "Резервная копия сохранена в: /root/.ssh-backups/"
+        exit 1
+    fi
+    
+    # Шаг 8: Проверка доступности нового порта
+    log_step "Проверка доступности нового порта SSH"
+    if ! check_ssh_port_accessible "$port" 10; then
+        log_warn "⚠️ Порт $port может быть недоступен извне."
+        log_warn "Убедитесь, что этот порт открыт в файрволе вашего облачного провайдера."
+        log_warn "Если вы потеряете доступ, используйте консоль облачного провайдера для восстановления."
+    fi
+    
+    log_success "✅ Настройка SSH завершена успешно."
+    log_info "Подключайтесь к серверу с использованием нового порта:"
+    echo -e "  ${COLOR_CYAN}ssh -p $port root@YOUR_SERVER_IP${COLOR_RESET}"
 }
 
 harden_system() {
@@ -519,6 +701,11 @@ net.ipv6.conf.lo.disable_ipv6=1'
         sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 ipv6.disable=1"/' /etc/default/grub
         update-grub >/dev/null 2>&1
     fi
+    
+    log_warn "${STYLE_BOLD}⚠️ ВНИМАНИЕ: IPv6 отключен. Требуется перезагрузка для полного применения.${COLOR_RESET}"
+    log_warn "После перезагрузки SSH будет доступен только на IPv4."
+    log_warn "Если вы потеряете доступ, используйте консоль облачного провайдера для восстановления."
+    log_warn "Для восстановления доступа см. TROUBLESHOOTING.md"
     log_success "IPv6 отключен. Требуется перезагрузка для полного применения."
 }
 
