@@ -2,7 +2,7 @@
 
 # Lightweight VPS Setup for Remnawave
 # Author: Kilo Code
-# Version: 1.2.0
+# Version: 1.3.0
 #
 # Этот скрипт выполняет базовую настройку и укрепление безопасности
 # для свежеустановленного сервера Debian/Ubuntu.
@@ -17,11 +17,15 @@ COLOR_CYAN='\033[0;36m'
 STYLE_BOLD='\033[1m'
 
 # --- Переменные окружения ---
-SSH_PORT="${SSH_PORT:-2222}"
+SSH_PORT="${SSH_PORT:-1337}"
 INSTALL_TBLOCKER="${INSTALL_TBLOCKER:-false}"
 BLOCK_ICMP="${BLOCK_ICMP:-false}"
 DISABLE_IPV6="${DISABLE_IPV6:-false}"
 TIMEZONE="${TIMEZONE:-}"
+
+# Важное предупреждение о порте 2222 для Remnawave
+# Порт 2222 используется панелью Remnawave и должен оставаться открытым!
+REMNWAVE_PANEL_PORT=2222
 
 # Новые переменные для расширенных функций
 ENABLE_BBR="${ENABLE_BBR:-true}"
@@ -88,6 +92,15 @@ check_os() {
 
 # --- Вспомогательные функции ---
 
+generate_random_port() {
+    echo $((RANDOM % 40000 + 10000))
+}
+
+validate_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1024 ]] && [[ "$port" -le 65535 ]]
+}
+
 backup_file() {
     local file="$1"
     if [[ -f "$file" ]]; then
@@ -132,8 +145,16 @@ update_system() {
 }
 
 setup_ssh() {
-    local port=${1:-2222}
+    local port=${1:-1337}
     log_info "Настройка безопасного SSH на порту $port..."
+    
+    # Предупреждение о важности порта 2222 для Remnawave
+    if [[ "$port" != "2222" ]]; then
+        log_warn "${STYLE_BOLD}⚠️  ВНИМАНИЕ: Порт 2222 используется панелью Remnawave!${COLOR_RESET}"
+        log_warn "Если вы планируете использовать Remnawave, оставьте порт 2222 открытым."
+        log_warn "Порт 2222 должен быть доступен для корректной работы панели."
+        echo ""
+    fi
 
     if [[ "$DRY_RUN" != "true" ]]; then
         sed -i "s/^#?Port .*/Port $port/" /etc/ssh/sshd_config
@@ -736,8 +757,17 @@ main() {
         install_core_utils
 
         if [ "$INTERACTIVE_SSH" == "true" ]; then
-            read -r -p "Введите новый порт для SSH (по умолчанию 2222): " user_port
-            setup_ssh "${user_port:-2222}"
+            local suggested_port=$(generate_random_port)
+            echo -e "${COLOR_BLUE}ℹ${COLOR_RESET}  ${COLOR_CYAN}Предложенный случайный порт: ${COLOR_GREEN}$suggested_port${COLOR_RESET}"
+            read -r -p "Введите новый порт для SSH (по умолчанию $suggested_port): " user_port
+            
+            # Валидация введенного порта
+            while ! validate_port "$user_port"; do
+                log_error "Некорректный порт. Введите число от 1024 до 65535."
+                read -r -p "Введите новый порт для SSH: " user_port
+            done
+            
+            setup_ssh "${user_port:-$suggested_port}"
         fi
 
         if [ "$INTERACTIVE_HARDEN" == "true" ]; then
