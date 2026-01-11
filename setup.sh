@@ -145,14 +145,14 @@ validate_ssh_config() {
     local sshd_exit_code=0
     
     # Выполняем валидацию и перехватываем вывод и код возврата с обработкой ошибок
-    log_info "Выполнение команды: sshd -t $config_file"
+    log_info "Выполнение команды: sshd -t"
     
     # Используем set +e для временного отключения выхода при ошибке
     local old_set_opts="$-"
     set +e
     
-    # Выполняем команду и перехватываем вывод
-    sshd_output=$(sshd -t "$config_file" 2>&1)
+    # Выполняем команду и перехватываем вывод (sshd -t автоматически использует /etc/ssh/sshd_config)
+    sshd_output=$(sshd -t 2>&1)
     sshd_exit_code=$?
     
     # Восстанавливаем предыдущие настройки
@@ -174,7 +174,7 @@ validate_ssh_config() {
     if [[ $sshd_exit_code -ne 0 ]]; then
         log_error "❌ КРИТИЧЕСКАЯ ОШИБКА: Конфигурация SSH содержит ошибки!"
         log_error "Пожалуйста, проверьте конфигурацию вручную:"
-        log_error "  sshd -t $config_file"
+        log_error "  sshd -t"
         log_error "Отмена изменений..."
         return 1
     fi
