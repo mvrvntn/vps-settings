@@ -361,12 +361,32 @@ setup_ssh() {
     # Шаг 4: Изменение конфигурации SSH
     log_step "Изменение конфигурации SSH"
     if [[ "$DRY_RUN" != "true" ]]; then
+        log_info "Текущий порт в конфигурации SSH (до изменения):"
+        grep -E "^#?Port" /etc/ssh/sshd_config || echo "Строка Port не найдена"
+        
+        log_info "Изменение порта SSH на $port..."
         sed -i "s/^#?Port .*/Port $port/" /etc/ssh/sshd_config
+        
+        log_info "Изменение PermitRootLogin на yes..."
         sed -i "s/^#?PermitRootLogin .*/PermitRootLogin yes/" /etc/ssh/sshd_config
+        
+        log_info "Изменение PasswordAuthentication на yes..."
         sed -i "s/^#?PasswordAuthentication .*/PasswordAuthentication yes/" /etc/ssh/sshd_config
+        
+        log_info "Изменение ChallengeResponseAuthentication на no..."
         sed -i "s/^#?ChallengeResponseAuthentication .*/ChallengeResponseAuthentication no/" /etc/ssh/sshd_config
+        
+        log_info "Изменение MaxAuthTries на 3..."
         sed -i "s/^#?MaxAuthTries .*/MaxAuthTries 3/" /etc/ssh/sshd_config
+        
+        log_info "Изменение MaxStartups на 10:30:60..."
         sed -i "s/^#?MaxStartups .*/MaxStartups 10:30:60/" /etc/ssh/sshd_config
+        
+        log_info "Новый порт в конфигурации SSH (после изменения):"
+        grep -E "^#?Port" /etc/ssh/sshd_config || echo "Строка Port не найдена"
+        
+        log_info "Полное содержимое файла конфигурации SSH (после изменения):"
+        cat /etc/ssh/sshd_config
     fi
     
     # Шаг 5: Валидация конфигурации SSH перед перезапуском
@@ -383,18 +403,39 @@ setup_ssh() {
     log_warn "Убедитесь, что этот порт открыт в файрволе вашего облачного провайдера!"
     
     if [[ "$DRY_RUN" != "true" ]]; then
-        if systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; then
-            log_success "✅ Сервис SSH перезапущен. Новый порт: $port."
+        log_info "Проверка состояния службы SSH перед перезапуском:"
+        systemctl status sshd 2>/dev/null || systemctl status ssh 2>/dev/null || echo "Служба SSH не найдена"
+        
+        log_info "Попытка перезапуска службы SSH (sshd)..."
+        if systemctl restart sshd 2>&1; then
+            log_success "✅ Сервис SSH (sshd) перезапущен успешно."
         else
-            log_error "❌ Не удалось перезапустить SSH."
-            log_error "Пожалуйста, проверьте конфигурацию:"
-            log_error "  sshd -t /etc/ssh/sshd_config"
-            log_error "  systemctl status ssh"
-            log_error "  journalctl -u ssh -n 50"
-            log_error ""
-            log_error "Резервная копия сохранена в: /root/.ssh-backups/"
-            exit 1
+            log_info "Попытка перезапуска службы SSH (ssh)..."
+            if systemctl restart ssh 2>&1; then
+                log_success "✅ Сервис SSH (ssh) перезапущен успешно."
+            else
+                log_error "❌ Не удалось перезапустить SSH."
+                log_error "Пожалуйста, проверьте конфигурацию:"
+                log_error "  sshd -t"
+                log_error "  systemctl status ssh"
+                log_error "  journalctl -u ssh -n 50"
+                log_error ""
+                log_error "Резервная копия сохранена в: /root/.ssh-backups/"
+                exit 1
+            fi
         fi
+        
+        log_info "Проверка состояния службы SSH после перезапуска:"
+        systemctl status sshd 2>/dev/null || systemctl status ssh 2>/dev/null || echo "Служба SSH не найдена"
+        
+        log_info "Проверка активного порта SSH после перезапуска:"
+        if command -v ss &>/dev/null; then
+            ss -tuln | grep -E ":(22|$port) " || echo "Порты не найдены"
+        else
+            netstat -tuln 2>/dev/null | grep -E ":(22|$port) " || echo "Порты не найдены"
+        fi
+        
+        log_success "✅ Сервис SSH перезапущен. Новый порт: $port."
     fi
     
     # Шаг 7: Проверка состояния SSH после перезапуска
