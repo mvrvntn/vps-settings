@@ -112,8 +112,66 @@ validate_ssh_config() {
         return 0
     fi
     
-    # Проверка конфигурации SSH на синтаксические ошибки
-    if ! sshd -t "$config_file" 2>/dev/null; then
+    # Проверка существования файла конфигурации
+    if [[ ! -f "$config_file" ]]; then
+        log_error "❌ КРИТИЧЕСКАЯ ОШИБКА: Файл конфигурации SSH не найден: $config_file"
+        log_error "Отмена изменений..."
+        return 1
+    fi
+    
+    # Проверка прав доступа к файлу конфигурации
+    log_info "Проверка прав доступа к файлу конфигурации SSH: $config_file"
+    local file_perms=$(stat -c "%a" "$config_file" 2>/dev/null || echo "unknown")
+    log_info "Права доступа к файлу: $file_perms"
+    
+    if [[ ! -r "$config_file" ]]; then
+        log_error "❌ КРИТИЧЕСКАЯ ОШИБКА: Нет прав на чтение файла конфигурации SSH: $config_file"
+        log_error "Отмена изменений..."
+        return 1
+    fi
+    
+    # Проверка доступности команды sshd
+    if ! command -v sshd &>/dev/null; then
+        log_error "❌ КРИТИЧЕСКАЯ ОШИБКА: Команда sshd не найдена!"
+        log_error "Отмена изменений..."
+        return 1
+    fi
+    
+    # Диагностическое логирование перед валидацией
+    log_info "Начало валидации конфигурации SSH: $config_file"
+    
+    # Проверка конфигурации SSH на синтаксические ошибки с try-catch для перехвата исключений
+    local sshd_output=""
+    local sshd_exit_code=0
+    
+    # Выполняем валидацию и перехватываем вывод и код возврата с обработкой ошибок
+    log_info "Выполнение команды: sshd -t $config_file"
+    
+    # Используем set +e для временного отключения выхода при ошибке
+    local old_set_opts="$-"
+    set +e
+    
+    # Выполняем команду и перехватываем вывод
+    sshd_output=$(sshd -t "$config_file" 2>&1)
+    sshd_exit_code=$?
+    
+    # Восстанавливаем предыдущие настройки
+    case "$old_set_opts" in
+        *e*) set -e ;;
+    esac
+    
+    # Логируем код возврата
+    log_info "Код возврата sshd -t: $sshd_exit_code"
+    
+    # Логируем вывод (если есть ошибки)
+    if [[ -n "$sshd_output" ]]; then
+        log_error "❌ Вывод sshd -t: $sshd_output"
+    else
+        log_info "Вывод sshd -t: (пусто)"
+    fi
+    
+    # Проверяем код возврата
+    if [[ $sshd_exit_code -ne 0 ]]; then
         log_error "❌ КРИТИЧЕСКАЯ ОШИБКА: Конфигурация SSH содержит ошибки!"
         log_error "Пожалуйста, проверьте конфигурацию вручную:"
         log_error "  sshd -t $config_file"
