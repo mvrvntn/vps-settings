@@ -47,11 +47,11 @@ check_os() {
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
-        if [[ "$OS" == "Ubuntu" && ("$VER" == "20.04" || "$VER" == "22.04") ]] || \
+        if [[ "$OS" == "Ubuntu" && ("$VER" == "20.04" || "$VER" == "22.04" || "$VER" == "24.04") ]] || \
            [[ "$OS" == "Debian GNU/Linux" && ("$VER" == "11" || "$VER" == "12") ]]; then
             log_info "Обнаружена поддерживаемая ОС: $OS $VER."
         else
-            log_error "Ваша ОС ($OS $VER) не поддерживается. Скрипт предназначен для Debian 11/12 и Ubuntu 20.04/22.04."
+            log_error "Ваша ОС ($OS $VER) не поддерживается. Скрипт предназначен для Debian 11/12 и Ubuntu 20.04/22.04/24.04."
             exit 1
         fi
     else
