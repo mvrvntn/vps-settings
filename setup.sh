@@ -2,7 +2,7 @@
 
 # Lightweight VPS Setup for Remnawave
 # Author: Kilo Code
-# Version: 1.5.0
+# Version: 1.6.0
 #
 # Этот скрипт выполняет базовую настройку и укрепление безопасности
 # для свежеустановленного сервера Debian/Ubuntu.
@@ -346,17 +346,42 @@ setup_ssh() {
         exit 1
     fi
     
-    # Шаг 2: Сохранение текущей конфигурации SSH для возможного отката
-    log_step "Сохранение текущей конфигурации SSH"
-    save_current_ssh_config
+    # Шаг 2: Проверка, настроен ли порт уже
+    log_step "Проверка текущей конфигурации SSH"
+    local current_port=$(grep -E "^#?Port " /etc/ssh/sshd_config | tail -1 | awk '{print $2}')
+    
+    # Если порт уже настроен на нужное значение, пропускаем настройку
+    if [[ "$current_port" == "$port" ]]; then
+        log_info "ℹ️ Порт SSH уже настроен на $port. Пропуск настройки SSH."
+        log_info "ℹ️ Если вы хотите изменить порт, используйте переменную SKIP_SSH_SETUP=false"
+        return 0
+    fi
     
     # Шаг 3: Проверка конфликтов портов
     log_step "Проверка конфликтов портов"
     if ! check_port_conflicts "$port"; then
+        # Проверяем, используется ли порт уже sshd
+        if command -v ss &>/dev/null; then
+            local process_info=$(ss -tulnp | grep ":$port " | head -1)
+            if [[ -n "$process_info" ]]; then
+                local process_name=$(echo "$process_info" | awk '{print $6}')
+                if [[ "$process_name" == *"sshd"* ]]; then
+                    log_info "ℹ️ Порт $port уже используется SSH (sshd)."
+                    log_info "ℹ️ Вероятно, порт уже настроен при предыдущем запуске."
+                    log_info "ℹ️ Пропуск настройки SSH для избежания конфликтов."
+                    return 0
+                fi
+            fi
+        fi
+        
         log_error "❌ Порт $port уже используется другим процессом."
         log_error "Пожалуйста, выберите другой порт или остановите конфликтующий процесс."
         exit 1
     fi
+    
+    # Шаг 4: Сохранение текущей конфигурации SSH для возможного отката
+    log_step "Сохранение текущей конфигурации SSH"
+    save_current_ssh_config
     
     # Шаг 4: Изменение конфигурации SSH
     log_step "Изменение конфигурации SSH"
