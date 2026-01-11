@@ -263,6 +263,7 @@ display_menu() {
     
     while true; do
         read -r -p "Ваш выбор: " choice
+        echo "DEBUG: Вы ввели: '$choice'" >&2
         case $choice in
             [1-6])
                 idx=$((choice-1))
