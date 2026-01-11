@@ -2,7 +2,7 @@
 
 # Lightweight VPS Setup for Remnawave
 # Author: Kilo Code
-# Version: 1.4.0
+# Version: 1.5.0
 #
 # Этот скрипт выполняет базовую настройку и укрепление безопасности
 # для свежеустановленного сервера Debian/Ubuntu.
@@ -365,22 +365,22 @@ setup_ssh() {
         grep -E "^#?Port" /etc/ssh/sshd_config || echo "Строка Port не найдена"
         
         log_info "Изменение порта SSH на $port..."
-        sed -i "s/^#?Port .*/Port $port/" /etc/ssh/sshd_config
+        sed -i "s/^#\?Port .*/Port $port/" /etc/ssh/sshd_config
         
         log_info "Изменение PermitRootLogin на yes..."
-        sed -i "s/^#?PermitRootLogin .*/PermitRootLogin yes/" /etc/ssh/sshd_config
+        sed -i "s/^#\?PermitRootLogin .*/PermitRootLogin yes/" /etc/ssh/sshd_config
         
         log_info "Изменение PasswordAuthentication на yes..."
-        sed -i "s/^#?PasswordAuthentication .*/PasswordAuthentication yes/" /etc/ssh/sshd_config
+        sed -i "s/^#\?PasswordAuthentication .*/PasswordAuthentication yes/" /etc/ssh/sshd_config
         
         log_info "Изменение ChallengeResponseAuthentication на no..."
-        sed -i "s/^#?ChallengeResponseAuthentication .*/ChallengeResponseAuthentication no/" /etc/ssh/sshd_config
+        sed -i "s/^#\?ChallengeResponseAuthentication .*/ChallengeResponseAuthentication no/" /etc/ssh/sshd_config
         
         log_info "Изменение MaxAuthTries на 3..."
-        sed -i "s/^#?MaxAuthTries .*/MaxAuthTries 3/" /etc/ssh/sshd_config
+        sed -i "s/^#\?MaxAuthTries .*/MaxAuthTries 3/" /etc/ssh/sshd_config
         
         log_info "Изменение MaxStartups на 10:30:60..."
-        sed -i "s/^#?MaxStartups .*/MaxStartups 10:30:60/" /etc/ssh/sshd_config
+        sed -i "s/^#\?MaxStartups .*/MaxStartups 10:30:60/" /etc/ssh/sshd_config
         
         log_info "Новый порт в конфигурации SSH (после изменения):"
         grep -E "^#?Port" /etc/ssh/sshd_config || echo "Строка Port не найдена"
