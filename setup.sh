@@ -2,7 +2,7 @@
 
 ################################################################################
 # Lightweight VPS Setup for Remnawave
-# Version: 1.13.0
+# Version: 1.14.0
 # Author: mvrvntn
 # Description: Automated VPS setup script for Debian/Ubuntu systems
 #              Compatible with remnawave-reverse-proxy and bbr3
@@ -18,7 +18,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Script version
-SCRIPT_VERSION="1.13.0"
+SCRIPT_VERSION="1.14.0"
 
 ################################################################################
 # Configuration Variables
@@ -383,50 +383,6 @@ EOF
     systemctl start unattended-upgrades
 
     print_success "Автоматические обновления настроены"
-}
-
-install_docker() {
-    print_header "🎓 Установка Docker и Docker Compose"
-    print_info "Установка последней версии Docker и Docker Compose для контейнеризации приложений."
-
-    # Remove old versions
-    apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-
-    # Install dependencies
-    apt-get update -qq
-    apt-get install -y \
-        ca-certificates \
-        curl \
-        gnupg \
-        lsb-release
-
-    # Add Docker's official GPG key
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/$OS/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-
-    # Set up the repository
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$OS \
-      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    # Install Docker Engine
-    apt-get update -qq
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-    # Enable and start Docker
-    systemctl enable docker
-    systemctl start docker
-
-    # Add current user to docker group if not root
-    if [ -n "$SUDO_USER" ]; then
-        usermod -aG docker "$SUDO_USER"
-        print_info "Пользователь $SUDO_USER добавлен в группу docker"
-    fi
-
-    print_success "Docker и Docker Compose установлены"
-    docker --version
-    docker compose version
 }
 
 install_utilities() {
@@ -800,14 +756,13 @@ show_menu() {
     echo "  [3] 🎓 Создать swap-файл - Создает swap-файл 2GB для улучшения производительности."
     echo "  [4] 🎓 Настроить время - Устанавливает chrony для точной синхронизации времени."
     echo "  [5] 🎓 Автообновления - Настраивает автоматические обновления безопасности."
-    echo "  [6] 🎓 Установить Docker - Устанавливает Docker и Docker Compose."
-    echo "  [7] 🎓 Установить утилиты - Устанавливает базовые утилиты для администрирования."
-    echo "  [8] 🎓 Установить tblocker - Блокирует торрент-трафик (опционально)."
-    echo "  [9] 🎓 Блокировать ICMP - Блокирует ping-запросы (опционально)."
-    echo " [10] 🎓 Отключить IPv6 - Полностью отключает IPv6 (опционально)."
-    echo " [11] 🎓 Настроить DNS - Настраивает DNS-серверы с автоматическим выбором оптимальных (опционально)."
-    echo " [12] 🎓 Установить всё - Устанавливает все обязательные компоненты."
-    echo " [13] 🎓 Полная настройка - Устанавливает все компоненты включая опциональные."
+    echo "  [6] 🎓 Установить утилиты - Устанавливает базовые утилиты для администрирования."
+    echo "  [7] 🎓 Установить tblocker - Блокирует торрент-трафик (опционально)."
+    echo "  [8] 🎓 Блокировать ICMP - Блокирует ping-запросы (опционально)."
+    echo "  [9] 🎓 Отключить IPv6 - Полностью отключает IPv6 (опционально)."
+    echo " [10] 🎓 Настроить DNS - Настраивает DNS-серверы с автоматическим выбором оптимальных (опционально)."
+    echo " [11] 🎓 Установить всё - Устанавливает все обязательные компоненты."
+    echo " [12] 🎓 Полная настройка - Устанавливает все компоненты включая опциональные."
     echo ""
     echo "  [0] 🎓 Выход"
     echo ""
@@ -820,10 +775,10 @@ run_interactive() {
         read -r choice
 
         case $choice in
-                1)
-                    # configure_ssh # Disabled - kept for compatibility
-                    print_info "Настройка SSH отключена"
-                    ;;
+            1)
+                # configure_ssh # Disabled - kept for compatibility
+                print_info "Настройка SSH отключена"
+                ;;
             2)
                 harden_system
                 ;;
@@ -837,29 +792,25 @@ run_interactive() {
                 setup_unattended_upgrades
                 ;;
             6)
-                install_docker
-                ;;
-            7)
                 install_utilities
                 ;;
-            8)
+            7)
                 install_tblocker
                 ;;
-            9)
+            8)
                 block_icmp
                 ;;
-            10)
+            9)
                 disable_ipv6
                 ;;
-            11)
+            10)
                 configure_dns
                 ;;
-            12)
+            11)
                 harden_system
                 create_swap
                 setup_chrony
                 setup_unattended_upgrades
-                install_docker
                 install_utilities
                 if [ "$ENABLE_LOGROTATE" = "true" ]; then
                     setup_logrotate
@@ -868,26 +819,23 @@ run_interactive() {
                     cleanup_system
                 fi
                 ;;
-            13)
+            12)
                 # configure_ssh # Disabled - kept for compatibility
                 harden_system
                 create_swap
                 setup_chrony
                 setup_unattended_upgrades
-                install_docker
                 install_utilities
                 install_tblocker
                 block_icmp
                 disable_ipv6
+                configure_dns
                 if [ "$ENABLE_LOGROTATE" = "true" ]; then
                     setup_logrotate
                 fi
                 if [ "$ENABLE_CLEANUP" = "true" ]; then
                     cleanup_system
                 fi
-                ;;
-            14)
-                configure_dns
                 ;;
             0)
                 echo "Выход..."
@@ -917,7 +865,6 @@ run_non_interactive() {
     create_swap
     setup_chrony
     setup_unattended_upgrades
-    install_docker
     install_utilities
 
     # Run optional functions based on environment variables
