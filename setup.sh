@@ -2,7 +2,7 @@
 
 ################################################################################
 # Lightweight VPS Setup for Remnawave
-# Version: 1.11.0
+# Version: 1.13.0
 # Author: mvrvntn
 # Description: Automated VPS setup script for Debian/Ubuntu systems
 #              Compatible with remnawave-reverse-proxy and bbr3
@@ -18,19 +18,20 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Script version
-SCRIPT_VERSION="1.11.0"
+SCRIPT_VERSION="1.13.0"
 
 ################################################################################
 # Configuration Variables
 ################################################################################
 
-# Default SSH port
+# Default SSH port (kept for compatibility, but not used)
 SSH_PORT="${SSH_PORT:-2222}"
 
 # Optional features (default: false)
 INSTALL_TBLOCKER="${INSTALL_TBLOCKER:-false}"
 BLOCK_ICMP="${BLOCK_ICMP:-false}"
 DISABLE_IPV6="${DISABLE_IPV6:-false}"
+CONFIGURE_DNS="${CONFIGURE_DNS:-false}"
 
 # Timezone
 TIMEZONE="${TIMEZONE:-Etc/UTC}"
@@ -55,7 +56,7 @@ DRY_RUN="${DRY_RUN:-false}"
 
 # Detect if running in non-interactive mode
 NON_INTERACTIVE=false
-if [ -n "$SSH_PORT" ] || [ -n "$INSTALL_TBLOCKER" ] || [ -n "$BLOCK_ICMP" ] || [ -n "$DISABLE_IPV6" ] || [ -n "$TIMEZONE" ]; then
+if [ -n "$SSH_PORT" ] || [ -n "$INSTALL_TBLOCKER" ] || [ -n "$BLOCK_ICMP" ] || [ -n "$DISABLE_IPV6" ] || [ -n "$TIMEZONE" ] || [ -n "$CONFIGURE_DNS" ]; then
     NON_INTERACTIVE=true
 fi
 
@@ -617,6 +618,168 @@ EOF
     print_success "IPv6 отключен"
 }
 
+configure_dns() {
+    print_header "🎓 Настройка DNS"
+    print_info "Настройка DNS-серверов с автоматическим выбором оптимальных серверов."
+
+    # Backup current resolv.conf
+    RESOLV_CONF="/etc/resolv.conf"
+    RESOLV_BACKUP="/etc/resolv.conf.backup.$(date +%Y%m%d%H%M%S)"
+    
+    if [ -f "$RESOLV_CONF" ]; then
+        cp "$RESOLV_CONF" "$RESOLV_BACKUP"
+        print_info "Создана резервная копия: $RESOLV_BACKUP"
+    fi
+
+    # DNS servers hierarchy
+    # Primary: Cloudflare DNS over TLS/HTTPS
+    DOT_SERVER="5u35p8m9i7.cloudflare-gateway.com"
+    DOH_URL="https://5u35p8m9i7.cloudflare-gateway.com/dns-query"
+    
+    # Secondary: IPv4 DNS servers
+    IPV4_DNS_PRIMARY="84.21.189.133"
+    IPV4_DNS_SECONDARY="193.23.209.189"
+    
+    # Tertiary: Fallback DNS servers
+    FALLBACK_DOH_URL="https://dns.comss.one/dns-query"
+    FALLBACK_IPV4_PRIMARY="83.220.169.155"
+    FALLBACK_IPV4_SECONDARY="212.109.195.93"
+
+    # Detect if we can use systemd-resolved (supports DoT/DoH)
+    USE_SYSTEMD_RESOLVED=false
+    if [ -f /etc/systemd/resolved.conf ] && systemctl is-active --quiet systemd-resolved; then
+        USE_SYSTEMD_RESOLVED=true
+        print_info "Обнаружен systemd-resolved - используется DNS over TLS"
+    fi
+
+    # Detect if we can use stubby (DoT client)
+    USE_STUBBY=false
+    if command -v stubby &> /dev/null; then
+        USE_STUBBY=true
+        print_info "Обнаружен stubby - используется DNS over TLS"
+    fi
+
+    # Configure DNS based on available options
+    if [ "$USE_SYSTEMD_RESOLVED" = "true" ]; then
+        # Configure systemd-resolved with DoT
+        cat > /etc/systemd/resolved.conf <<EOF
+[Resolve]
+# Cloudflare DNS over TLS
+DNS=${IPV4_DNS_PRIMARY} ${IPV4_DNS_SECONDARY}
+FallbackDNS=${FALLBACK_IPV4_PRIMARY} ${FALLBACK_IPV4_SECONDARY}
+# DoT configuration
+DNSOverTLS=yes
+DNS=${DOT_SERVER}
+EOF
+        
+        # Restart systemd-resolved
+        systemctl restart systemd-resolved
+        
+        # Update symlink to use systemd-resolved
+        if [ -L "$RESOLV_CONF" ]; then
+            rm "$RESOLV_CONF"
+        fi
+        ln -sf /run/systemd/resolve/stub-resolv.conf "$RESOLV_CONF"
+        
+        print_success "DNS настроен через systemd-resolved с DoT"
+        
+    elif [ "$USE_STUBBY" = "true" ]; then
+        # Configure stubby with DoT
+        mkdir -p /etc/stubby
+        
+        cat > /etc/stubby/stubby.yml <<EOF
+resolution_type: GETDNS_RESOLUTION_STUB
+round_robin_upstreams: true
+listen_addresses:
+  - 127.0.0.1
+  - 0::1
+dns_transport_list:
+  - GETDNS_TRANSPORT_TLS
+tls_authentication: GETDNS_AUTHENTICATION_REQUIRED
+tls_query_padding_blocksize: 128
+edns_client_subnet:
+  - 0.0.0.0/0
+upstream_recursive_servers:
+  - address_data: ${DOT_SERVER}
+    tls_auth_name: "${DOT_SERVER}"
+    tls_port: 853
+  - address_data: ${IPV4_DNS_PRIMARY}
+  - address_data: ${IPV4_DNS_SECONDARY}
+  - address_data: ${FALLBACK_IPV4_PRIMARY}
+  - address_data: ${FALLBACK_IPV4_SECONDARY}
+EOF
+        
+        # Restart stubby
+        systemctl enable stubby
+        systemctl restart stubby
+        
+        # Update resolv.conf to use stubby
+        cat > "$RESOLV_CONF" <<EOF
+# DNS configuration by vps-setup
+# Using stubby for DNS over TLS
+nameserver 127.0.0.1
+nameserver ::1
+options timeout:2 attempts:3 rotate single-request-reopen
+EOF
+        
+        print_success "DNS настроен через stubby с DoT"
+        
+    else
+        # Fallback to traditional DNS configuration
+        print_info "Используется традиционная конфигурация DNS"
+        
+        # Create new resolv.conf
+        cat > "$RESOLV_CONF" <<EOF
+# DNS configuration by vps-setup
+# Primary DNS servers
+nameserver ${IPV4_DNS_PRIMARY}
+nameserver ${IPV4_DNS_SECONDARY}
+
+# Fallback DNS servers
+nameserver ${FALLBACK_IPV4_PRIMARY}
+nameserver ${FALLBACK_IPV4_SECONDARY}
+
+options timeout:2 attempts:3 rotate single-request-reopen
+options edns0
+EOF
+        
+        # Prevent DHCP from overwriting resolv.conf
+        if [ -f /etc/dhcp/dhclient.conf ]; then
+            if ! grep -q "supersede domain-name-servers" /etc/dhcp/dhclient.conf; then
+                echo "supersede domain-name-servers ${IPV4_DNS_PRIMARY}, ${IPV4_DNS_SECONDARY};" >> /etc/dhcp/dhclient.conf
+            fi
+        fi
+        
+        # For NetworkManager
+        if [ -f /etc/NetworkManager/NetworkManager.conf ]; then
+            if ! grep -q "dns=none" /etc/NetworkManager/NetworkManager.conf; then
+                sed -i '/^\[main\]/a dns=none' /etc/NetworkManager/NetworkManager.conf
+            fi
+        fi
+        
+        print_success "DNS настроен с использованием IPv4-адресов"
+    fi
+
+    # Test DNS configuration
+    print_info "Проверка DNS-конфигурации..."
+    
+    if command -v nslookup &> /dev/null; then
+        if nslookup google.com > /dev/null 2>&1; then
+            print_success "DNS работает корректно"
+        else
+            print_warning "DNS может не работать корректно. Проверьте конфигурацию."
+        fi
+    fi
+
+    print_info ""
+    print_info "Используемые DNS-серверы:"
+    print_info "  • Основной (DoT): ${DOT_SERVER}"
+    print_info "  • Основной (IPv4): ${IPV4_DNS_PRIMARY}"
+    print_info "  • Резервный (IPv4): ${IPV4_DNS_SECONDARY}"
+    print_info "  • Fallback (DoH): ${FALLBACK_DOH_URL}"
+    print_info "  • Fallback (IPv4): ${FALLBACK_IPV4_PRIMARY}, ${FALLBACK_IPV4_SECONDARY}"
+}
+
 ################################################################################
 # Interactive Menu
 ################################################################################
@@ -642,8 +805,9 @@ show_menu() {
     echo "  [8] 🎓 Установить tblocker - Блокирует торрент-трафик (опционально)."
     echo "  [9] 🎓 Блокировать ICMP - Блокирует ping-запросы (опционально)."
     echo " [10] 🎓 Отключить IPv6 - Полностью отключает IPv6 (опционально)."
-    echo " [11] 🎓 Установить всё - Устанавливает все обязательные компоненты."
-    echo " [12] 🎓 Полная настройка - Устанавливает все компоненты включая опциональные."
+    echo " [11] 🎓 Настроить DNS - Настраивает DNS-серверы с автоматическим выбором оптимальных (опционально)."
+    echo " [12] 🎓 Установить всё - Устанавливает все обязательные компоненты."
+    echo " [13] 🎓 Полная настройка - Устанавливает все компоненты включая опциональные."
     echo ""
     echo "  [0] 🎓 Выход"
     echo ""
@@ -656,9 +820,10 @@ run_interactive() {
         read -r choice
 
         case $choice in
-            1)
-                configure_ssh
-                ;;
+                1)
+                    # configure_ssh # Disabled - kept for compatibility
+                    print_info "Настройка SSH отключена"
+                    ;;
             2)
                 harden_system
                 ;;
@@ -687,7 +852,9 @@ run_interactive() {
                 disable_ipv6
                 ;;
             11)
-                configure_ssh
+                configure_dns
+                ;;
+            12)
                 harden_system
                 create_swap
                 setup_chrony
@@ -701,8 +868,8 @@ run_interactive() {
                     cleanup_system
                 fi
                 ;;
-            12)
-                configure_ssh
+            13)
+                # configure_ssh # Disabled - kept for compatibility
                 harden_system
                 create_swap
                 setup_chrony
@@ -718,6 +885,9 @@ run_interactive() {
                 if [ "$ENABLE_CLEANUP" = "true" ]; then
                     cleanup_system
                 fi
+                ;;
+            14)
+                configure_dns
                 ;;
             0)
                 echo "Выход..."
@@ -742,7 +912,7 @@ run_non_interactive() {
     print_info "Используются переменные окружения для автоматической настройки."
 
     # Always run core functions
-    configure_ssh
+    # configure_ssh  # Disabled - kept for compatibility
     harden_system
     create_swap
     setup_chrony
@@ -761,6 +931,10 @@ run_non_interactive() {
 
     if [ "$DISABLE_IPV6" = "true" ]; then
         disable_ipv6
+    fi
+
+    if [ "$CONFIGURE_DNS" = "true" ]; then
+        configure_dns
     fi
 
     # Run maintenance functions
